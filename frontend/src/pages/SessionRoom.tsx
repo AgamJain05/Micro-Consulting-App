@@ -1,142 +1,201 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { Video, Mic, MicOff, PhoneOff, MessageSquare, Send, Clock, PlusCircle } from 'lucide-react';
-import { api } from '../lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-
-interface ChatMessage {
-  userId: string;
-  text: string;
-  timestamp: number;
-  isMe: boolean;
-  isSystem?: boolean;
-}
+import { sessionsApi } from '../lib/api/index';
+import { useWebRTC } from '../hooks/useWebRTC';
+import { useSessionSocket } from '../hooks/useSessionSocket';
+import { VideoPanel } from '../components/session/VideoPanel';
+import { ChatPanel } from '../components/session/ChatPanel';
+import { toast } from '../store/toastStore';
+import type { ChatMessage, WebSocketMessage, Session } from '../types';
 
 export const SessionRoom = () => {
-  const { sessionId } = useParams();
+  const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const [socket, setSocket] = useState<WebSocket | null>(null);
   const queryClient = useQueryClient();
-  
-  // Modes: 'chat' or 'video'
+
+  // State
   const [mode, setMode] = useState<'chat' | 'video'>('chat');
-  
-  // Media State
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionDetails, setSessionDetails] = useState<Session | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
-  
-  // Timer State
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [maxDuration, setMaxDuration] = useState(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  
+  const [maxDuration, setMaxDuration] = useState(999999);
+  const [isMuted, setIsMuted] = useState(false);
+
   // Refs
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const myVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
-  
-  // Chat State
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputText, setInputText] = useState("");
+  // Ref to store sendMessage function for use in WebRTC callbacks
+  const sendMessageRef = useRef<(msg: WebSocketMessage) => void>(() => { });
 
-  // Session Details
-  const [sessionDetails, setSessionDetails] = useState<any>(null);
+  // WebRTC Hook
+  const {
+    initializeMedia,
+    createOffer,
+    handleOffer,
+    handleAnswer,
+    handleIceCandidate,
+    cleanup: cleanupWebRTC,
+  } = useWebRTC({
+    sessionId: sessionId || '',
+    userId: user?.id || '',
+    onRemoteStream: (stream) => {
+      setRemoteStream(stream);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      }
+    },
+    onIceCandidate: (candidate) => {
+      // Send ICE candidate to peer via WebSocket using ref
+      sendMessageRef.current({ type: 'ice-candidate', candidate });
+    },
+    onError: (error) => {
+      toast.error(error);
+      addSystemMessage(error);
+    },
+  });
 
-  // 1. Initialize Session & WebSocket (Run Once)
+  const handleChatMessage = useCallback((msg: ChatMessage) => {
+    setMessages(prev => [...prev, msg]);
+  }, []);
+
+  const addSystemMessage = useCallback((text: string) => {
+    setMessages(prev => [...prev, {
+      userId: 'system',
+      text,
+      timestamp: Date.now(),
+      isMe: false,
+      isSystem: true,
+    }]);
+  }, []);
+
+  // WebSocket message handlers
+  const handleWebRTCMessage = useCallback(async (msg: WebSocketMessage) => {
+    if (msg.type === 'offer' && msg.sdp) {
+      // Initialize media first if not already done (receiver side)
+      const stream = await initializeMedia();
+
+      // Attach local stream to video element
+      if (stream && myVideoRef.current) {
+        myVideoRef.current.srcObject = stream;
+      }
+
+      setMode('video');
+      addSystemMessage('Video call started');
+
+      const answer = await handleOffer(msg.sdp);
+      if (answer) {
+        sendMessageRef.current({ type: 'answer', sdp: answer });
+      }
+    } else if (msg.type === 'answer' && msg.sdp) {
+      await handleAnswer(msg.sdp);
+    } else if (msg.type === 'ice-candidate' && msg.candidate) {
+      await handleIceCandidate(msg.candidate);
+    }
+  }, [handleOffer, handleAnswer, handleIceCandidate, initializeMedia, addSystemMessage]);
+
+  const handleSessionEnded = useCallback(() => {
+    cleanupWebRTC();
+    if (timerRef.current) clearInterval(timerRef.current);
+    toast.info('Session ended by partner');
+    navigate('/my-sessions');
+  }, [cleanupWebRTC, navigate]);
+
+  // WebSocket Hook
+  const {
+    isConnected,
+    sendMessage,
+    sendChatMessage,
+    sendEndSession,
+  } = useSessionSocket({
+    sessionId: sessionId || '',
+    userId: user?.id || '',
+    onWebRTCMessage: handleWebRTCMessage,
+    onChatMessage: handleChatMessage,
+    onSystemMessage: addSystemMessage,
+    onSessionEnded: handleSessionEnded,
+  });
+
+  // Update sendMessage ref when it changes
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
+  // Load session on mount
   useEffect(() => {
     if (!user || !sessionId) return;
 
-    const fetchSession = async () => {
+    const loadSession = async () => {
       try {
-        const res = await api.get(`/api/v1/sessions/${sessionId}`);
-        setSessionDetails(res.data);
-        
-        if (res.data.status !== 'accepted' && res.data.status !== 'active') {
-            alert("Session is not active or accepted.");
-            navigate('/');
-            return;
+        const session = await sessionsApi.getById(sessionId);
+        setSessionDetails(session);
+
+        if (session.status !== 'accepted' && session.status !== 'active') {
+          toast.error('Session is not active');
+          navigate('/my-sessions');
+          return;
         }
 
-        // Calculate Max Duration
+        // Calculate max duration for client
         if (user.role === 'client') {
-            const rate = res.data.consultant?.price_per_minute || 0;
-            const credits = user.credits || 0;
-            if (rate > 0) {
-                setMaxDuration(Math.floor((credits / rate) * 60));
-            } else {
-                setMaxDuration(999999); // Free
-            }
-        } else {
-            setMaxDuration(999999); // Consultant has no limit
-        }
-
-        if (res.data.status === 'active') {
-          setMode('video'); 
-          if (res.data.actual_start_time) {
-            const start = new Date(res.data.actual_start_time).getTime();
-            const now = Date.now();
-            setElapsedSeconds(Math.floor((now - start) / 1000));
+          const rate = session.consultant?.price_per_minute || 0;
+          const credits = user.credits || 0;
+          if (rate > 0) {
+            setMaxDuration(Math.floor((credits / rate) * 60));
           }
         }
-        
-        // Fetch Chat History
+
+        // Resume active session
+        if (session.status === 'active') {
+          setMode('video');
+          if (session.actual_start_time) {
+            const start = new Date(session.actual_start_time).getTime();
+            setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
+          }
+        }
+
+        // Load chat history
         try {
-            const historyRes = await api.get(`/api/v1/sessions/${sessionId}/messages`);
-            const history = historyRes.data.map((m: any) => ({
-                userId: m.sender_id,
-                text: m.content,
-                timestamp: new Date(m.timestamp).getTime(),
-                isMe: m.sender_id === user.id
-            }));
-            setMessages(history);
+          const history = await sessionsApi.getMessages(sessionId);
+          const formattedHistory: ChatMessage[] = history.map((m: any) => ({
+            userId: m.sender_id,
+            text: m.content,
+            timestamp: new Date(m.timestamp).getTime(),
+            isMe: m.sender_id === user.id,
+          }));
+          setMessages(formattedHistory);
         } catch (e) {
-            console.error("Failed to load chat history", e);
+          console.error('Failed to load chat history', e);
         }
 
       } catch (e) {
-        console.error("Failed to load session", e);
-        navigate('/');
+        console.error('Failed to load session', e);
+        toast.error('Failed to load session');
+        navigate('/my-sessions');
       }
     };
 
-    fetchSession();
-
-    // WebSocket Setup
-    const wsUrl = `ws://localhost:8000/api/v1/ws/session/${sessionId}/${user.id}`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      console.log("Connected to signaling server");
-    };
-
-    ws.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
-      handleSignalingMessage(msg);
-    };
-
-    setSocket(ws);
+    loadSession();
 
     return () => {
-      ws.close();
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      if (peerConnection.current) peerConnection.current.close();
+      cleanupWebRTC();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [sessionId, user]);
+  }, [sessionId, user, navigate, cleanupWebRTC]);
 
-  // Timer Logic & Auto-End
+  // Timer for video mode
   useEffect(() => {
     if (mode === 'video') {
       if (!timerRef.current) {
         timerRef.current = setInterval(() => {
           setElapsedSeconds(prev => {
             const next = prev + 1;
-            // Auto-end check for client
             if (user?.role === 'client' && next >= maxDuration) {
-                endCall(true); // Force end
+              endCall(true);
             }
             return next;
           });
@@ -148,13 +207,120 @@ export const SessionRoom = () => {
         timerRef.current = null;
       }
     }
+
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [mode, maxDuration]);
+  }, [mode, maxDuration, user?.role]);
+
+  // Attach remote video when stream changes
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+
+  // Add time mutation
+  const addTimeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/v1/users/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: 20 }),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      const rate = sessionDetails?.consultant?.price_per_minute || 1;
+      setMaxDuration(prev => prev + Math.floor((20 / rate) * 60));
+      toast.success('Added $20 credits! Time extended.');
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: () => {
+      toast.error('Failed to add credits');
+    },
+  });
+
+  // Actions
+  const startVideoCall = async () => {
+    try {
+      await sessionsApi.startVideo(sessionId!);
+
+      // Initialize media first
+      const stream = await initializeMedia();
+      if (!stream) return;
+
+      // Attach local stream to video element
+      if (myVideoRef.current) {
+        myVideoRef.current.srcObject = stream;
+      }
+
+      setMode('video');
+      setElapsedSeconds(0);
+
+      addSystemMessage('Video call started');
+
+      // Create and send offer after a brief delay to ensure everything is set up
+      setTimeout(async () => {
+        const offer = await createOffer();
+        if (offer) {
+          sendMessage({ type: 'offer', sdp: offer });
+        }
+      }, 500);
+
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to start video call');
+    }
+  };
+
+  const endCall = async (force = false) => {
+    cleanupWebRTC();
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    sendEndSession();
+
+    try {
+      const res = await sessionsApi.updateStatus(sessionId!, { status: 'completed' });
+      const cost = res.total_cost;
+
+      if (force) {
+        toast.warning('Session ended: Credits exhausted');
+      } else {
+        toast.success(`Session ended. Total: $${cost?.toFixed(2) || '0.00'}`);
+      }
+    } catch (e) {
+      if (!force) toast.info('Session ended');
+    }
+
+    navigate('/my-sessions');
+  };
+
+  const handleSendChat = (text: string) => {
+    sendChatMessage(text);
+    // Add to local messages immediately (our own message)
+    setMessages(prev => {
+      const newMsg = {
+        userId: user?.id || '',
+        text,
+        timestamp: Date.now(),
+        isMe: true,
+      };
+      return [...prev, newMsg];
+    });
+  };
+
+  const toggleMute = () => {
+    const stream = myVideoRef.current?.srcObject as MediaStream | null;
+    if (stream) {
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -162,374 +328,45 @@ export const SessionRoom = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Add Time Mutation
-  const addTimeMutation = useMutation({
-    mutationFn: async () => {
-        // Add $20 credits
-        await api.post('/api/v1/users/topup', { amount: 20 });
-    },
-    onSuccess: () => {
-        // Recalculate max duration
-        const rate = sessionDetails.consultant.price_per_minute;
-        setMaxDuration(prev => prev + Math.floor((20 / rate) * 60));
-        alert("Added $20 credits! Time extended.");
-        queryClient.invalidateQueries({ queryKey: ['me'] }); // Refresh user store if needed
-    }
-  });
-
-  // 2. WebRTC Logic (Triggered when mode becomes 'video')
-  useEffect(() => {
-    if (mode !== 'video') return;
-
-    const initWebRTC = async () => {
-      try {
-        console.log("Initializing WebRTC...");
-        const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        setStream(localStream);
-        // Attach to local video element (might need to wait for ref)
-        if (myVideoRef.current) myVideoRef.current.srcObject = localStream;
-
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
-
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-        pc.ontrack = (event) => {
-          console.log("Received remote track");
-          const [remote] = event.streams;
-          setRemoteStream(remote);
-          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remote;
-        };
-
-        pc.onicecandidate = (event) => {
-          if (event.candidate && socket?.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({
-              type: 'ice-candidate',
-              candidate: event.candidate,
-              target: 'peer'
-            }));
-          }
-        };
-
-        peerConnection.current = pc;
-        
-      } catch (err) {
-        console.error("Error accessing media:", err);
-        setMessages(prev => [...prev, {
-          userId: 'system',
-          text: 'Error accessing camera/mic. Please check permissions.',
-          timestamp: Date.now(),
-          isMe: false,
-          isSystem: true
-        }]);
-      }
-    };
-
-    initWebRTC();
-  }, [mode]); // Re-run when switching to video mode
-
-  // Attach video ref when stream changes (sometimes refs are null initially)
-  useEffect(() => {
-    if (stream && myVideoRef.current) myVideoRef.current.srcObject = stream;
-    if (remoteStream && remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
-  }, [stream, remoteStream, mode]);
-
-
-  // 3. Signaling Logic
-  const handleSignalingMessage = async (msg: any) => {
-    if (msg.type === 'chat') {
-      setMessages(prev => [...prev, {
-        userId: msg.userId,
-        text: msg.text,
-        timestamp: msg.timestamp,
-        isMe: msg.userId === user?.id
-      }]);
-      return;
-    }
-    
-    if (msg.type === 'system') {
-       setMessages(prev => [...prev, {
-        userId: 'system',
-        text: msg.text,
-        timestamp: Date.now(),
-        isMe: false,
-        isSystem: true
-      }]);
-      return;
-    }
-
-    if (msg.type === 'session-ended') {
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      if (peerConnection.current) peerConnection.current.close();
-      if (timerRef.current) clearInterval(timerRef.current);
-      alert("Session ended by partner.");
-      navigate('/');
-      return;
-    }
-
-    // WebRTC Signaling
-    if (!peerConnection.current && mode !== 'video') {
-      return;
-    }
-    
-    const pc = peerConnection.current;
-    if (!pc) return; 
-
-    switch (msg.type) {
-      case 'offer':
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket?.send(JSON.stringify({ type: 'answer', sdp: answer }));
-        break;
-
-      case 'answer':
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        break;
-
-      case 'ice-candidate':
-        if (msg.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        }
-        break;
-    }
-  };
-
-  const endCall = async (force = false) => {
-    // 1. Stop Media
-    if (stream) stream.getTracks().forEach(track => track.stop());
-    if (peerConnection.current) peerConnection.current.close();
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    // 2. Send WS message
-    socket?.send(JSON.stringify({ type: 'end-session' }));
-
-    // 3. API Call to complete session
-    try {
-      const res = await api.patch(`/api/v1/sessions/${sessionId}/status`, {
-        status: 'completed'
-      });
-      const cost = res.data.total_cost;
-      
-      if (force) alert("Session Ended: Credits exhausted.");
-      else alert(`Session Ended. Total Cost: $${cost?.toFixed(2)}`);
-      
-    } catch (e) {
-      console.error("Error ending session:", e);
-      if (!force) alert("Session ended.");
-    }
-
-    // 4. Navigate away
-    navigate('/');
-  };
-
-  // 4. Actions
-  const startVideoCall = async () => {
-    try {
-      await api.post(`/api/v1/sessions/${sessionId}/start_video`);
-      
-      setMode('video');
-      setElapsedSeconds(0); // Reset timer
-      
-      socket?.send(JSON.stringify({
-        type: 'system',
-        text: 'Video call started.'
-      }));
-      
-      setTimeout(async () => {
-        if (peerConnection.current) {
-          const pc = peerConnection.current;
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket?.send(JSON.stringify({ type: 'offer', sdp: offer }));
-        }
-      }, 1000); 
-      
-    } catch (err: any) {
-      alert(err.response?.data?.detail || "Failed to start video call");
-    }
-  };
-
-  const sendChat = () => {
-    if (!inputText.trim() || !socket) return;
-    
-    const msg = {
-      type: 'chat',
-      text: inputText,
-      timestamp: Date.now()
-    };
-    
-    socket.send(JSON.stringify(msg));
-    setMessages(prev => [...prev, {
-      userId: user?.id || '',
-      text: inputText,
-      timestamp: Date.now(),
-      isMe: true
-    }]);
-    setInputText("");
-  };
-
   const timeRemaining = Math.max(0, maxDuration - elapsedSeconds);
-  const isLowBalance = timeRemaining < 60; // Less than 1 minute
+  const isLowBalance = timeRemaining < 60;
+
+  const otherPartyName = user?.role === 'client'
+    ? sessionDetails?.consultant?.first_name
+    : sessionDetails?.client?.first_name;
 
   return (
-    <div className="flex h-[calc(100vh-80px)] bg-gray-50">
-      {/* Left Side: Video Area (Only visible in video mode) */}
+    <div className="flex h-[calc(100vh-80px)] bg-gray-100">
+      {/* Video Panel (only in video mode) */}
       {mode === 'video' && (
-        <div className="flex-1 bg-gray-900 relative flex flex-col">
-          {/* Video Area */}
-          <div className="flex-1 relative overflow-hidden">
-            <video 
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              className="w-full h-full object-cover"
-            />
-            {!remoteStream && (
-              <div className="absolute inset-0 flex items-center justify-center text-white/50">
-                Waiting for partner video...
-              </div>
-            )}
-            
-            {/* In-Call Timer Overlay */}
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2">
-                <div className={`bg-black/50 backdrop-blur-sm text-white px-4 py-1 rounded-full flex items-center gap-2 text-sm font-mono border border-white/20 shadow-lg ${isLowBalance ? 'text-red-400 border-red-500/50' : ''}`}>
-                    <Clock size={14} className={`${isLowBalance ? 'animate-bounce' : 'animate-pulse'}`} />
-                    <span>{formatTime(elapsedSeconds)}</span>
-                    {user?.role === 'client' && (
-                        <span className="opacity-60 text-xs ml-1">
-                            / {formatTime(maxDuration)} left
-                        </span>
-                    )}
-                </div>
-                
-                {user?.role === 'client' && (
-                    <button 
-                        onClick={() => addTimeMutation.mutate()}
-                        className="bg-green-600 hover:bg-green-700 text-white p-1.5 rounded-full shadow-lg transition"
-                        title="Add $20 Credits (Extend Time)"
-                    >
-                        <PlusCircle size={16} />
-                    </button>
-                )}
-            </div>
-
-            {/* Local PiP */}
-            <div className="absolute bottom-4 right-4 w-48 aspect-video bg-black rounded-lg overflow-hidden border border-gray-700 shadow-xl">
-              <video 
-                ref={myVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-            </div>
-          </div>
-          
-          {/* Controls */}
-          <div className="h-20 bg-gray-800 flex items-center justify-center gap-6">
-              <button onClick={() => {
-                if(stream) stream.getAudioTracks().forEach(t => t.enabled = !t.enabled);
-                setIsMuted(!isMuted);
-              }} className={`p-3 rounded-full ${isMuted ? 'bg-red-500' : 'bg-gray-600'} text-white`}>
-                {isMuted ? <MicOff /> : <Mic />}
-              </button>
-              <button onClick={() => endCall(false)} className="p-3 rounded-full bg-red-600 text-white hover:bg-red-700 transition shadow-lg shadow-red-900/50" title="End Call">
-                <PhoneOff />
-              </button>
-          </div>
-        </div>
+        <VideoPanel
+          myVideoRef={myVideoRef}
+          remoteVideoRef={remoteVideoRef}
+          hasRemoteStream={!!remoteStream}
+          isMuted={isMuted}
+          elapsedSeconds={elapsedSeconds}
+          maxDuration={maxDuration}
+          isClient={user?.role === 'client'}
+          isLowBalance={isLowBalance}
+          onToggleMute={toggleMute}
+          onEndCall={() => endCall(false)}
+          onAddTime={() => addTimeMutation.mutate()}
+          formatTime={formatTime}
+        />
       )}
 
-      {/* Right Side: Chat */}
-      <div className={`flex flex-col bg-white shadow-xl z-10 transition-all duration-300 ${
-        mode === 'video' ? 'w-96 border-l border-gray-200' : 'flex-1 max-w-4xl mx-auto w-full border-x border-gray-200 my-4 rounded-2xl overflow-hidden h-[calc(100vh-120px)]'
-      }`}>
-        {/* Chat Header */}
-        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
-              <MessageSquare size={20} />
-            </div>
-            <div>
-              <h3 className="font-bold text-gray-800">
-                {sessionDetails?.consultant?.first_name || 'Consultant'}
-              </h3>
-              {user?.role === 'client' && (
-                <p className="text-xs text-gray-500">
-                  Balance: ${Math.floor(user.credits || 0)}
-                </p>
-              )}
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            {mode === 'chat' && (
-              <button 
-                onClick={startVideoCall}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 transition shadow-sm"
-              >
-                <Video size={18} />
-                <span>Call</span>
-              </button>
-            )}
-            <button 
-              onClick={() => endCall(false)}
-              className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 transition border border-red-200"
-              title="End Session"
-            >
-              <PhoneOff size={16} />
-            </button>
-            <div className="w-2 h-2 rounded-full bg-green-500" title="Connected"></div>
-          </div>
-        </div>
-        
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
-          {messages.map((msg, i) => (
-            msg.isSystem ? (
-              <div key={i} className="text-center text-xs text-gray-400 my-2 italic">
-                {msg.text}
-              </div>
-            ) : (
-              <div key={i} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'}`}>
-                <div className={`max-w-[75%] px-5 py-3 rounded-2xl text-sm shadow-sm leading-relaxed ${
-                  msg.isMe 
-                    ? 'bg-blue-600 text-white rounded-tr-none' 
-                    : 'bg-white text-gray-700 border border-gray-100 rounded-tl-none'
-                }`}>
-                  {msg.text}
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1 px-1">
-                  {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                </span>
-              </div>
-            )
-          ))}
-        </div>
-        
-        {/* Input Area */}
-        <div className="p-4 bg-white border-t border-gray-100">
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendChat()}
-              placeholder="Type a message..."
-              className="flex-1 bg-gray-100 text-gray-900 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none border-transparent border transition"
-            />
-            <button 
-              onClick={sendChat}
-              className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition shadow-sm disabled:opacity-50"
-              disabled={!inputText.trim()}
-            >
-              <Send size={20} />
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Chat Panel */}
+      <ChatPanel
+        messages={messages}
+        otherPartyName={otherPartyName || 'Partner'}
+        userCredits={user?.credits || 0}
+        isClient={user?.role === 'client'}
+        isConnected={isConnected}
+        isVideoMode={mode === 'video'}
+        onSendMessage={handleSendChat}
+        onStartVideoCall={startVideoCall}
+        onEndSession={() => endCall(false)}
+      />
     </div>
   );
 };

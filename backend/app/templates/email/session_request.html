@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>New Session Request!</h1>
+
+<p>Hello {{ consultant_name }},</p>
+
+<p>You have received a new consultation request from <strong>{{ client_name }}</strong>.</p>
+
+<div class="info-box">
+    <div class="info-row">
+        <span class="info-label">Client</span>
+        <span class="info-value">{{ client_name }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Topic</span>
+        <span class="info-value">{{ session_topic }}</span>
+    </div>
+    {% if scheduled_time %}
+    <div class="info-row">
+        <span class="info-label">Scheduled For</span>
+        <span class="info-value">{{ scheduled_time }}</span>
+    </div>
+    {% else %}
+    <div class="info-row">
+        <span class="info-label">Type</span>
+        <span class="info-value">Instant Session</span>
+    </div>
+    {% endif %}
+    <div class="info-row">
+        <span class="info-label">Your Rate</span>
+        <span class="info-value">${{ rate_per_minute }}/min</span>
+    </div>
+</div>
+
+{% if message %}
+<p><strong>Client's Message:</strong></p>
+<div class="info-box">
+    <p style="margin: 0; color: #1e293b;">{{ message }}</p>
+</div>
+{% endif %}
+
+<p style="text-align: center;">
+    <a href="{{ app_url }}/my-sessions" class="button">View Request</a>
+</p>
+
+<p>Please respond to this request promptly. Clients appreciate quick responses!</p>
+
+<p>Best regards,<br>The MicroConsult Team</p>
+{% endblock %}

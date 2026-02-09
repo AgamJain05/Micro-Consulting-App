@@ -1,6 +1,6 @@
 from typing import Any, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from beanie import PydanticObjectId, Link
 from beanie.operators import Or
 from app.models.session import Session, SessionStatus
@@ -9,8 +9,36 @@ from app.models.message import Message
 from app.schemas.session import SessionCreate, SessionResponse, SessionUpdate
 from app.schemas.message import MessageSchema
 from app.api import deps
+from app.services.email_service import email_service
 
 router = APIRouter()
+
+def user_to_dict(user: User) -> dict:
+    """Convert User to dict with proper id serialization."""
+    if not user:
+        return None
+    user_dict = user.model_dump()
+    user_dict["id"] = str(user.id)
+    return user_dict
+
+def session_to_response(session: Session) -> dict:
+    """Convert Session to response dict with proper id serialization."""
+    session_dict = session.model_dump(exclude={"client", "consultant"})
+    session_dict["id"] = str(session.id)
+    
+    # Handle client
+    if hasattr(session, 'client') and session.client and not isinstance(session.client, Link):
+        session_dict["client"] = user_to_dict(session.client)
+    else:
+        session_dict["client"] = None
+        
+    # Handle consultant
+    if hasattr(session, 'consultant') and session.consultant and not isinstance(session.consultant, Link):
+        session_dict["consultant"] = user_to_dict(session.consultant)
+    else:
+        session_dict["consultant"] = None
+    
+    return session_dict
 
 async def manual_fetch_session_users(session: Session) -> Session:
     """
@@ -35,6 +63,7 @@ async def manual_fetch_session_users(session: Session) -> Session:
 @router.post("/", response_model=SessionResponse)
 async def request_session(
     session_in: SessionCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_user),
 ) -> Any:
     consultant = await User.get(PydanticObjectId(session_in.consultant_id))
@@ -52,19 +81,31 @@ async def request_session(
         description=session_in.description,
         duration_minutes=session_in.duration_minutes or 15,
         scheduled_at=session_in.scheduled_at,
-        status=SessionStatus.PENDING
+        status=SessionStatus.PENDING,
+        cost_per_minute=consultant.price_per_minute or 0
     )
     
     await session.create()
     
+    # Send email notification to consultant (background task)
+    background_tasks.add_task(
+        email_service.send_session_request_notification,
+        consultant_email=consultant.email,
+        consultant_name=consultant.first_name,
+        client_name=f"{current_user.first_name} {current_user.last_name}",
+        topic=session_in.topic,
+        session_id=str(session.id)
+    )
+    
     # Populate for response
     session.client = current_user
     session.consultant = consultant
-    return session
+    return session_to_response(session)
 
 @router.post("/{session_id}/accept", response_model=SessionResponse)
 async def accept_session(
     session_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_user),
 ) -> Any:
     session = await Session.get(PydanticObjectId(session_id))
@@ -81,11 +122,23 @@ async def accept_session(
         
     session.status = SessionStatus.ACCEPTED
     await session.save()
-    return session
+    
+    # Send email notification to client
+    background_tasks.add_task(
+        email_service.send_session_accepted_notification,
+        client_email=session.client.email,
+        client_name=session.client.first_name,
+        consultant_name=f"{current_user.first_name} {current_user.last_name}",
+        topic=session.topic,
+        session_id=str(session.id)
+    )
+    
+    return session_to_response(session)
 
 @router.post("/{session_id}/reject", response_model=SessionResponse)
 async def reject_session(
     session_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_user),
 ) -> Any:
     session = await Session.get(PydanticObjectId(session_id))
@@ -99,7 +152,17 @@ async def reject_session(
         
     session.status = SessionStatus.REJECTED
     await session.save()
-    return session
+    
+    # Send email notification to client
+    background_tasks.add_task(
+        email_service.send_session_rejected_notification,
+        client_email=session.client.email,
+        client_name=session.client.first_name,
+        consultant_name=f"{current_user.first_name} {current_user.last_name}",
+        topic=session.topic
+    )
+    
+    return session_to_response(session)
 
 @router.post("/{session_id}/start_video", response_model=SessionResponse)
 async def start_session_video(
@@ -138,36 +201,38 @@ async def start_session_video(
         await session.consultant.save()
 
     await session.save()
-    return session
+    return session_to_response(session)
 
 @router.get("/", response_model=List[SessionResponse])
 async def get_my_sessions(
     current_user: User = Depends(deps.get_current_user),
-    status: SessionStatus = None
+    status: SessionStatus = None,
+    limit: int = 100
 ) -> Any:
-    # DEBUG: Print current user ID
-    print(f"Fetching sessions for User: {current_user.id} ({current_user.email})")
+    """
+    Get sessions for the current user.
+    Uses optimized database query instead of fetching all sessions.
+    """
+    # Build query to find sessions where user is client OR consultant
+    query = Session.find({
+        "$or": [
+            {"client.$id": current_user.id},
+            {"consultant.$id": current_user.id}
+        ]
+    }).sort("-created_at").limit(limit)
     
-    # Fallback: Fetch ALL sessions and filter in Python to guarantee finding them
-    # This helps debug if it's a query issue or data issue
-    all_sessions = await Session.find_all().sort("-created_at").to_list()
-    
-    user_sessions = []
-    for s in all_sessions:
-        # Manually check IDs
-        # session.client is Link, so check .ref.id
-        c_id = s.client.ref.id if s.client and s.client.ref else None
-        cons_id = s.consultant.ref.id if s.consultant and s.consultant.ref else None
-        
-        if c_id == current_user.id or cons_id == current_user.id:
-            await manual_fetch_session_users(s)
-            user_sessions.append(s)
-            
     if status:
-        user_sessions = [s for s in user_sessions if s.status == status]
-        
-    print(f"Found {len(user_sessions)} sessions for user.")
-    return user_sessions
+        query = query.find(Session.status == status)
+    
+    sessions = await query.to_list()
+    
+    # Populate user references and convert to response
+    result = []
+    for session in sessions:
+        await manual_fetch_session_users(session)
+        result.append(session_to_response(session))
+    
+    return result
 
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
@@ -183,7 +248,7 @@ async def get_session(
     if session.client.id != current_user.id and session.consultant.id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this session")
         
-    return session
+    return session_to_response(session)
 
 @router.get("/{session_id}/messages", response_model=List[MessageSchema])
 async def get_session_messages(
@@ -265,4 +330,4 @@ async def update_session_status(
                 session.is_paid = True
             
     await session.save()
-    return session
+    return session_to_response(session)

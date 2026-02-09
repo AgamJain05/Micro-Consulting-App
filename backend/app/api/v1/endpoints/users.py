@@ -7,6 +7,12 @@ from app.api import deps
 
 router = APIRouter()
 
+def user_to_response(user: User) -> dict:
+    """Convert Beanie User document to response dict with proper id serialization."""
+    user_dict = user.model_dump()
+    user_dict["id"] = str(user.id)
+    return user_dict
+
 @router.put("/profile", response_model=UserResponse)
 async def update_user_profile(
     user_in: UserUpdate,
@@ -31,7 +37,7 @@ async def update_user_profile(
         current_user.status = user_in.status
         
     await current_user.save()
-    return current_user
+    return user_to_response(current_user)
 
 @router.post("/topup", response_model=UserResponse)
 async def topup_credits(
@@ -43,7 +49,7 @@ async def topup_credits(
     
     current_user.credits += amount
     await current_user.save()
-    return current_user
+    return user_to_response(current_user)
 
 @router.get("/consultants", response_model=List[UserResponse])
 async def search_consultants(
@@ -75,11 +81,11 @@ async def search_consultants(
         query = query.find({"skills": {"$all": skills}})
         
     users = await query.skip(skip).limit(limit).to_list()
-    return users
+    return [user_to_response(u) for u in users]
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user_by_id(user_id: str) -> Any:
     user = await User.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return user_to_response(user)

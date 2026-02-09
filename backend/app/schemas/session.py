@@ -26,7 +26,8 @@ class SessionResponse(SessionBase):
         json_encoders={PydanticObjectId: str}
     )
 
-    id: Optional[PydanticObjectId] = Field(alias="_id", default=None)
+    # Return id as string (not alias) for frontend compatibility
+    id: Optional[str] = Field(default=None)
     client: Optional[UserResponse] = None
     consultant: Optional[UserResponse] = None
     status: SessionStatus

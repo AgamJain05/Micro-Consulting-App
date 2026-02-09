@@ -24,8 +24,6 @@ class ConnectionManager:
             "userId": user_id,
             "count": len(self.active_connections[session_id])
         }, exclude_user=user_id)
-        
-        logger.info(f"User {user_id} connected to session {session_id}")
 
     def disconnect(self, session_id: str, user_id: str):
         if session_id in self.active_connections:
@@ -33,17 +31,17 @@ class ConnectionManager:
                 del self.active_connections[session_id][user_id]
             if not self.active_connections[session_id]:
                 del self.active_connections[session_id]
-        
-        logger.info(f"User {user_id} disconnected from session {session_id}")
 
     async def broadcast_to_room(self, session_id: str, message: dict, exclude_user: str = None):
-        if session_id in self.active_connections:
-            for user_id, connection in self.active_connections[session_id].items():
-                if user_id != exclude_user:
-                    try:
-                        await connection.send_text(json.dumps(message))
-                    except Exception as e:
-                        logger.error(f"Error sending message to {user_id}: {e}")
+        if session_id not in self.active_connections:
+            return
+            
+        for user_id, connection in self.active_connections[session_id].items():
+            if user_id != exclude_user:
+                try:
+                    await connection.send_text(json.dumps(message))
+                except Exception as e:
+                    logger.error(f"[Manager] Error sending to {user_id}: {e}")
 
 manager = ConnectionManager()
 

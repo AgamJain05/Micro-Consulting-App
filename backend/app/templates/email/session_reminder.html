@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Session Reminder</h1>
+
+<p>Hello {{ user_name }},</p>
+
+<p>This is a reminder that your consultation session is starting soon!</p>
+
+<div class="info-box">
+    <div class="info-row">
+        <span class="info-label">{{ "Client" if is_consultant else "Consultant" }}</span>
+        <span class="info-value">{{ other_party_name }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Topic</span>
+        <span class="info-value">{{ session_topic }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Scheduled Time</span>
+        <span class="info-value">{{ scheduled_time }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Starts In</span>
+        <span class="info-value">{{ time_until }} minutes</span>
+    </div>
+</div>
+
+<p style="text-align: center;">
+    <a href="{{ session_url }}" class="button">Join Session</a>
+</p>
+
+<p><strong>Quick checklist:</strong></p>
+<ul style="color: #475569;">
+    <li>✓ Test your camera and microphone</li>
+    <li>✓ Find a quiet, well-lit space</li>
+    <li>✓ Close unnecessary applications</li>
+    <li>✓ Have your materials ready</li>
+</ul>
+
+<p>Best regards,<br>The MicroConsult Team</p>
+{% endblock %}

@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 class UserRole(str, Enum):
     CLIENT = "client"
     CONSULTANT = "consultant"
+    ADMIN = "admin"
 
 class AvailabilityStatus(str, Enum):
     ONLINE = "online"
@@ -17,6 +18,7 @@ class User(Document):
     email: Indexed(EmailStr, unique=True)
     hashed_password: str
     role: UserRole = UserRole.CLIENT
+    is_active: bool = True  # For admin to deactivate users
     
     first_name: str
     last_name: str
@@ -29,6 +31,7 @@ class User(Document):
     bio: Optional[str] = None
     skills: List[str] = []
     price_per_minute: Optional[float] = None  # In USD
+    free_minutes: int = 15  # Free minutes for consultants (default 15)
     
     # New UI fields
     rating: float = 5.0

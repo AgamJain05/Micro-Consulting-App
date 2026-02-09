@@ -22,6 +22,7 @@ class UserUpdate(BaseModel):
     bio: Optional[str] = None
     skills: Optional[List[str]] = None
     price_per_minute: Optional[float] = None
+    free_minutes: Optional[int] = None
     timezone: Optional[str] = None
     status: Optional[AvailabilityStatus] = None
     category: Optional[str] = None
@@ -41,12 +42,13 @@ class UserResponse(UserBase):
         json_encoders={PydanticObjectId: str}
     )
 
-    # Explicitly map id to _id from Beanie
-    id: Optional[PydanticObjectId] = Field(alias="_id", default=None)
+    # Return both id and _id for compatibility
+    id: Optional[str] = Field(default=None)
     headline: Optional[str] = None
     bio: Optional[str] = None
     skills: List[str] = []
     price_per_minute: Optional[float] = None
+    free_minutes: int = 15
     status: AvailabilityStatus
     timezone: str
     rating: float = 5.0

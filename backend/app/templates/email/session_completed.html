@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Session Completed</h1>
+
+<p>Hello {{ user_name }},</p>
+
+<p>Your consultation session has been completed.</p>
+
+<div class="info-box">
+    <div class="info-row">
+        <span class="info-label">{{ "Client" if is_consultant else "Consultant" }}</span>
+        <span class="info-value">{{ other_party_name }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Topic</span>
+        <span class="info-value">{{ session_topic }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Duration</span>
+        <span class="info-value">{{ duration_minutes }} minutes</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">{{ "Earned" if is_consultant else "Total Cost" }}</span>
+        <span class="info-value">${{ total_cost }}</span>
+    </div>
+</div>
+
+{% if is_consultant %}
+<p>Your earnings have been added to your wallet balance. You can withdraw your funds anytime.</p>
+<p style="text-align: center;">
+    <a href="{{ app_url }}/wallet" class="button">View Wallet</a>
+</p>
+{% else %}
+<p>We hope you had a great experience! Please take a moment to rate your consultant.</p>
+<p style="text-align: center;">
+    <a href="{{ app_url }}/my-sessions" class="button">Leave a Review</a>
+</p>
+{% endif %}
+
+<p>Thank you for using MicroConsult!</p>
+
+<p>Best regards,<br>The MicroConsult Team</p>
+{% endblock %}

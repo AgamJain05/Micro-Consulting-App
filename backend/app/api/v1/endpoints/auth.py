@@ -10,11 +10,12 @@ router = APIRouter()
 
 @router.post("/register", response_model=UserResponse)
 async def register(user_in: UserCreate) -> Any:
-    user = await User.find_one(User.email == user_in.email)
-    if user:
+    # Check if email already exists
+    existing_user_email = await User.find_one(User.email == user_in.email)
+    if existing_user_email:
         raise HTTPException(
             status_code=400,
-            detail="The user with this username already exists in the system",
+            detail="Email is already taken",
         )
     
     user_data = user_in.model_dump(exclude={"password"})
@@ -22,7 +23,11 @@ async def register(user_in: UserCreate) -> Any:
     
     user = User(**user_data)
     await user.create()
-    return user
+    
+    # Convert Beanie document to dict and ensure id is a string
+    user_dict = user.model_dump()
+    user_dict["id"] = str(user.id)
+    return user_dict
 
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Any:
@@ -38,5 +43,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Any:
 
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(deps.get_current_user)) -> Any:
-    return current_user
+    # Convert Beanie document to dict and ensure id is a string
+    user_dict = current_user.model_dump()
+    user_dict["id"] = str(current_user.id)  # Explicitly convert ObjectId to string
+    return user_dict
 
