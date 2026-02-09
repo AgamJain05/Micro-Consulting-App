@@ -1,5 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
+import certifi
 from app.core.config import settings
 from app.models.user import User
 from app.models.session import Session
@@ -17,7 +18,8 @@ async def init_db():
         tls=True,  # Enable TLS/SSL
         tlsAllowInvalidCertificates=False,  # Validate certificates in production
         serverSelectionTimeoutMS=10000,  # Increased timeout for initial connection
-        connectTimeoutMS=20000,  # Increased connection timeout
+        connectTimeoutMS=20000, 
+        tlsCAFile=certifi.where(), # Increased connection timeout
         retryWrites=True,  # Enable retryable writes
         w='majority'  # Write concern for data safety
     )
