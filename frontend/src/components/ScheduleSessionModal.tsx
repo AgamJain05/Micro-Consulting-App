@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Calendar, Clock, X } from 'lucide-react';
+import { Calendar, X } from 'lucide-react';
 
 interface ScheduleSessionModalProps {
   consultant: {
@@ -33,7 +33,7 @@ export function ScheduleSessionModal({
   const [time, setTime] = useState('');
 
   const consultantId = consultant.id || consultant._id || '';
-  
+
   // Get minimum date (tomorrow)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -41,12 +41,12 @@ export function ScheduleSessionModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!topic || !date || !time) return;
-    
+
     // Combine date and time into ISO string
     const scheduledAt = new Date(`${date}T${time}`).toISOString();
-    
+
     onSchedule({
       consultant_id: consultantId,
       topic,

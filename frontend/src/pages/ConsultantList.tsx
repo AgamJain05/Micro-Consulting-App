@@ -46,6 +46,11 @@ export const ConsultantList = () => {
         enabled: !!user
     });
 
+    // Update user credits when profile is fetched
+    if (userProfile && user) {
+        useAuthStore.getState().updateUser({ credits: userProfile.credits });
+    }
+
     const handleRequestClick = (consultant: any) => {
         if (!user) {
             navigate('/login');

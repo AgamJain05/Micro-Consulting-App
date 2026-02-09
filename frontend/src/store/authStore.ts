@@ -5,6 +5,7 @@ import { toast } from './toastStore';
 
 interface AuthUser {
   id: string;
+  _id?: string; // MongoDB ID field
   email: string;
   first_name: string;
   last_name: string;
