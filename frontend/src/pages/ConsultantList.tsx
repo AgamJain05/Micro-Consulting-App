@@ -36,21 +36,6 @@ export const ConsultantList = () => {
         retry: false
     });
 
-    // Refresh user profile to get latest credits
-    const { data: userProfile } = useQuery({
-        queryKey: ['me'],
-        queryFn: async () => {
-            const res = await api.get('/api/v1/auth/me');
-            return res.data;
-        },
-        enabled: !!user
-    });
-
-    // Update user credits when profile is fetched
-    if (userProfile && user) {
-        useAuthStore.getState().updateUser({ credits: userProfile.credits });
-    }
-
     const handleRequestClick = (consultant: any) => {
         if (!user) {
             navigate('/login');
