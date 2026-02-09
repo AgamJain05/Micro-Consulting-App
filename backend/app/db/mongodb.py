@@ -7,11 +7,27 @@ from app.models.review import Review
 from app.models.message import Message
 
 async def init_db():
-    # Add SSL/TLS parameters to fix Python 3.13 compatibility issues
+    """
+    Initialize MongoDB connection with proper SSL/TLS configuration.
+    Fixes SSL handshake errors on production platforms like Render.
+    """
+    # MongoDB Atlas requires TLS/SSL - configure properly for production
     client = AsyncIOMotorClient(
         settings.MONGODB_URL,
-        tlsAllowInvalidCertificates=True,  # Bypass SSL cert validation
-        serverSelectionTimeoutMS=5000,
-        connectTimeoutMS=10000
+        tls=True,  # Enable TLS/SSL
+        tlsAllowInvalidCertificates=False,  # Validate certificates in production
+        serverSelectionTimeoutMS=10000,  # Increased timeout for initial connection
+        connectTimeoutMS=20000,  # Increased connection timeout
+        retryWrites=True,  # Enable retryable writes
+        w='majority'  # Write concern for data safety
     )
+    
+    # Test connection
+    try:
+        await client.admin.command('ping')
+        print("✅ MongoDB connection successful!")
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {e}")
+        raise
+    
     await init_beanie(database=client[settings.DATABASE_NAME], document_models=[User, Session, Review, Message])
