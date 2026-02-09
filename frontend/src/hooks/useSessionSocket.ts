@@ -44,7 +44,7 @@ export function useSessionSocket(options: UseSessionSocketOptions): UseSessionSo
 
     // Use production domain in production, localhost in dev
     const wsHost = import.meta.env.PROD
-      ? 'api.yourdomain.com' // Replace with your production domain
+      ? 'micro-consulting-app-backend.onrender.com' // Render backend domain
       : (window.location.hostname === 'localhost'
         ? 'localhost:8000'
         : window.location.host);
