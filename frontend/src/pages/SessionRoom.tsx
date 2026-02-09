@@ -220,8 +220,16 @@ export const SessionRoom = () => {
   useEffect(() => {
     if (remoteStream && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(e => console.error('Error playing remote video:', e));
     }
   }, [remoteStream]);
+
+  // Ensure local video plays when attached (fixes black screen in PiP)
+  useEffect(() => {
+    if (myVideoRef.current && myVideoRef.current.srcObject) {
+      myVideoRef.current.play().catch(e => console.error('Error playing local video:', e));
+    }
+  }, [myVideoRef.current?.srcObject]);
 
   // Add time mutation
   const addTimeMutation = useMutation({
