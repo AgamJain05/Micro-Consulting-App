@@ -20,6 +20,7 @@ export const SessionRoom = () => {
   const [mode, setMode] = useState<'chat' | 'video'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionDetails, setSessionDetails] = useState<Session | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null); // 🔥 NEW: Track local stream
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [maxDuration, setMaxDuration] = useState(999999);
@@ -29,7 +30,6 @@ export const SessionRoom = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const myVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  // Ref to store sendMessage function for use in WebRTC callbacks
   const sendMessageRef = useRef<(msg: WebSocketMessage) => void>(() => { });
 
   // WebRTC Hook
@@ -44,13 +44,10 @@ export const SessionRoom = () => {
     sessionId: sessionId || '',
     userId: user?.id || '',
     onRemoteStream: (stream) => {
+      console.log('🎥 Remote stream received:', stream.id);
       setRemoteStream(stream);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-      }
     },
     onIceCandidate: (candidate) => {
-      // Send ICE candidate to peer via WebSocket using ref
       sendMessageRef.current({ type: 'ice-candidate', candidate });
     },
     onError: (error) => {
@@ -76,14 +73,18 @@ export const SessionRoom = () => {
   // WebSocket message handlers
   const handleWebRTCMessage = useCallback(async (msg: WebSocketMessage) => {
     if (msg.type === 'offer' && msg.sdp) {
-      // Initialize media first if not already done (receiver side)
-      const stream = await initializeMedia();
+      console.log('📞 Received offer, initializing media...');
 
-      // Attach local stream to video element
-      if (stream && myVideoRef.current) {
-        myVideoRef.current.srcObject = stream;
+      // Initialize media first (receiver side)
+      const stream = await initializeMedia();
+      if (!stream) {
+        console.error('❌ Failed to initialize media');
+        toast.error('Failed to access camera/microphone');
+        return;
       }
 
+      console.log('✅ Local stream initialized:', stream.id);
+      setLocalStream(stream); // 🔥 Set state instead of ref
       setMode('video');
       addSystemMessage('Video call started');
 
@@ -92,6 +93,7 @@ export const SessionRoom = () => {
         sendMessageRef.current({ type: 'answer', sdp: answer });
       }
     } else if (msg.type === 'answer' && msg.sdp) {
+      console.log('📞 Received answer');
       await handleAnswer(msg.sdp);
     } else if (msg.type === 'ice-candidate' && msg.candidate) {
       await handleIceCandidate(msg.candidate);
@@ -99,11 +101,18 @@ export const SessionRoom = () => {
   }, [handleOffer, handleAnswer, handleIceCandidate, initializeMedia, addSystemMessage]);
 
   const handleSessionEnded = useCallback(() => {
+    // Stop local tracks
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
+
     cleanupWebRTC();
     if (timerRef.current) clearInterval(timerRef.current);
     toast.info('Session ended by partner');
     navigate('/my-sessions');
-  }, [cleanupWebRTC, navigate]);
+  }, [cleanupWebRTC, navigate, localStream]);
 
   // WebSocket Hook
   const {
@@ -120,10 +129,40 @@ export const SessionRoom = () => {
     onSessionEnded: handleSessionEnded,
   });
 
-  // Update sendMessage ref when it changes
+  // Update sendMessage ref
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  // 🔥 Attach local stream to video element when state changes
+  useEffect(() => {
+    if (localStream && myVideoRef.current) {
+      console.log('🎥 Attaching local stream to video element:', localStream.id);
+      myVideoRef.current.srcObject = localStream;
+
+      // Ensure video plays
+      myVideoRef.current.play().catch(e => {
+        console.error('Error playing local video:', e);
+        // Retry after delay
+        setTimeout(() => {
+          myVideoRef.current?.play().catch(err =>
+            console.error('Retry failed:', err)
+          );
+        }, 100);
+      });
+    }
+  }, [localStream]);
+
+  // 🔥 Attach remote stream to video element when state changes
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      console.log('🎥 Attaching remote stream to video element:', remoteStream.id);
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(e => {
+        console.error('Error playing remote video:', e);
+      });
+    }
+  }, [remoteStream]);
 
   // Load session on mount
   useEffect(() => {
@@ -182,6 +221,10 @@ export const SessionRoom = () => {
     loadSession();
 
     return () => {
+      // Cleanup on unmount
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
       cleanupWebRTC();
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -216,21 +259,6 @@ export const SessionRoom = () => {
     };
   }, [mode, maxDuration, user?.role]);
 
-  // Attach remote video when stream changes
-  useEffect(() => {
-    if (remoteStream && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      remoteVideoRef.current.play().catch(e => console.error('Error playing remote video:', e));
-    }
-  }, [remoteStream]);
-
-  // Ensure local video plays when attached (fixes black screen in PiP)
-  useEffect(() => {
-    if (myVideoRef.current && myVideoRef.current.srcObject) {
-      myVideoRef.current.play().catch(e => console.error('Error playing local video:', e));
-    }
-  }, [myVideoRef.current?.srcObject]);
-
   // Add time mutation
   const addTimeMutation = useMutation({
     mutationFn: async () => {
@@ -255,37 +283,56 @@ export const SessionRoom = () => {
   // Actions
   const startVideoCall = async () => {
     try {
+      console.log('🎬 Starting video call...');
       await sessionsApi.startVideo(sessionId!);
 
       // Initialize media first
       const stream = await initializeMedia();
-      if (!stream) return;
-
-      // Attach local stream to video element
-      if (myVideoRef.current) {
-        myVideoRef.current.srcObject = stream;
+      if (!stream) {
+        toast.error('Failed to access camera/microphone');
+        return;
       }
 
+      console.log('✅ Local stream initialized:', stream.id);
+      console.log('📹 Video tracks:', stream.getVideoTracks().length);
+      console.log('🎤 Audio tracks:', stream.getAudioTracks().length);
+
+      setLocalStream(stream); // 🔥 Set state, not ref
       setMode('video');
       setElapsedSeconds(0);
 
       addSystemMessage('Video call started');
 
-      // Create and send offer after a brief delay to ensure everything is set up
+      // Create and send offer after a brief delay
       setTimeout(async () => {
         const offer = await createOffer();
         if (offer) {
+          console.log('📤 Sending offer');
           sendMessage({ type: 'offer', sdp: offer });
         }
       }, 500);
 
     } catch (err: any) {
+      console.error('❌ Failed to start video call:', err);
       toast.error(err.response?.data?.detail || 'Failed to start video call');
     }
   };
 
   const endCall = async (force = false) => {
+    console.log('🛑 Ending call...');
+
+    // Stop all local tracks
+    if (localStream) {
+      localStream.getTracks().forEach(track => {
+        track.stop();
+        console.log('Stopped track:', track.kind);
+      });
+      setLocalStream(null);
+    }
+
     cleanupWebRTC();
+    setRemoteStream(null);
+
     if (timerRef.current) clearInterval(timerRef.current);
 
     sendEndSession();
@@ -308,7 +355,6 @@ export const SessionRoom = () => {
 
   const handleSendChat = (text: string) => {
     sendChatMessage(text);
-    // Add to local messages immediately (our own message)
     setMessages(prev => {
       const newMsg = {
         userId: user?.id || '',
@@ -321,12 +367,12 @@ export const SessionRoom = () => {
   };
 
   const toggleMute = () => {
-    const stream = myVideoRef.current?.srcObject as MediaStream | null;
-    if (stream) {
-      stream.getAudioTracks().forEach(track => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
         track.enabled = !track.enabled;
       });
       setIsMuted(!isMuted);
+      console.log('🔇 Mute toggled:', !isMuted);
     }
   };
 
@@ -344,13 +390,14 @@ export const SessionRoom = () => {
     : sessionDetails?.client?.first_name;
 
   return (
-    <div className="flex h-[calc(100vh-80px)] bg-gray-100">
+    <div className="flex flex-col md:flex-row h-[calc(100vh-80px)] bg-gray-100">
       {/* Video Panel (only in video mode) */}
       {mode === 'video' && (
         <VideoPanel
           myVideoRef={myVideoRef}
           remoteVideoRef={remoteVideoRef}
           hasRemoteStream={!!remoteStream}
+          hasLocalStream={!!localStream} // 🔥 Pass local stream status
           isMuted={isMuted}
           elapsedSeconds={elapsedSeconds}
           maxDuration={maxDuration}
