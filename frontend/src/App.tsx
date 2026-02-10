@@ -351,9 +351,6 @@ function NotificationBadge() {
 }
 
 function Home() {
-  const navigate = useNavigate();
-  const { user } = useAuthStore();
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       {/* Fix #14: Improved mobile responsiveness */}
