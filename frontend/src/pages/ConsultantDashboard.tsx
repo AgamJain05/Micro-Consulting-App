@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
-import { SettingsDropdown } from '../components/SettingsDropdown';
 
 export const ConsultantDashboard = () => {
   const { user } = useAuthStore();
@@ -77,8 +76,6 @@ export const ConsultantDashboard = () => {
                   }`}></div>
               </button>
             </div>
-
-            <SettingsDropdown />
           </div>
         </div>
 
@@ -116,15 +113,17 @@ export const ConsultantDashboard = () => {
             <div className="text-xs text-gray-500 mt-1">Total minutes</div>
           </div>
 
-          {/* Rating */}
-          <div className="bg-white p-6 rounded-3xl shadow-soft border border-gray-100">
-            <div className="flex items-center gap-2 mb-3 text-gray-600">
-              <span className="material-icons-round text-2xl text-yellow-500">star</span>
-              <span className="text-sm font-bold uppercase tracking-wide">Rating</span>
+          {/* Rating - Fix #3: Only show if consultant has reviews */}
+          {userProfile?.review_count && userProfile.review_count > 0 ? (
+            <div className="bg-white p-6 rounded-3xl shadow-soft border border-gray-100">
+              <div className="flex items-center gap-2 mb-3 text-gray-600">
+                <span className="material-icons-round text-2xl text-yellow-500">star</span>
+                <span className="text-sm font-bold uppercase tracking-wide">Rating</span>
+              </div>
+              <div className="text-4xl font-extrabold text-gray-900">{userProfile?.rating?.toFixed(1) || "5.0"}</div>
+              <div className="text-xs text-gray-500 mt-1">{userProfile?.review_count || 0} reviews</div>
             </div>
-            <div className="text-4xl font-extrabold text-gray-900">{userProfile?.rating?.toFixed(1) || "5.0"}</div>
-            <div className="text-xs text-gray-500 mt-1">{userProfile?.review_count || 0} reviews</div>
-          </div>
+          ) : null}
         </div>
 
         {/* Recent Sessions */}
@@ -149,9 +148,9 @@ export const ConsultantDashboard = () => {
                 </div>
                 <div className="flex items-center gap-3 mt-3 md:mt-0">
                   <div className={`px-4 py-1.5 rounded-xl text-xs font-bold ${s.status === 'completed' ? 'bg-green-100 text-green-700' :
-                      s.status === 'active' ? 'bg-blue-100 text-blue-700' :
-                        s.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-gray-100 text-gray-700'
+                    s.status === 'active' ? 'bg-blue-100 text-blue-700' :
+                      s.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
                     }`}>
                     {s.status.charAt(0).toUpperCase() + s.status.slice(1)}
                   </div>

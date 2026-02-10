@@ -237,8 +237,17 @@ export const SessionRoom = () => {
         timerRef.current = setInterval(() => {
           setElapsedSeconds(prev => {
             const next = prev + 1;
-            if (user?.role === 'client' && next >= maxDuration) {
-              endCall(true);
+            // Fix #9: Only warn, don't auto-end session
+            // Let backend handle session ending based on actual credit deduction
+            if (user?.role === 'client') {
+              const timeRemaining = maxDuration - next;
+              if (timeRemaining === 60) {
+                toast.warning('Less than 1 minute remaining!');
+              } else if (timeRemaining === 30) {
+                toast.error('30 seconds remaining! Add credits to continue.');
+              } else if (timeRemaining <= 0 && timeRemaining > -5) {
+                toast.error('Out of credits! Add credits to continue.');
+              }
             }
             return next;
           });

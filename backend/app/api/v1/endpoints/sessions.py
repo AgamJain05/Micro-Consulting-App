@@ -73,6 +73,13 @@ async def request_session(
     
     if consultant.id == current_user.id:
          raise HTTPException(status_code=400, detail="Cannot request session with yourself")
+    
+    # Fix #13: Prevent consultants from booking other consultants
+    if current_user.role == UserRole.CONSULTANT:
+        raise HTTPException(
+            status_code=400, 
+            detail="Consultants cannot book other consultants. Please create a client account to book sessions."
+        )
 
     session = Session(
         client=current_user,

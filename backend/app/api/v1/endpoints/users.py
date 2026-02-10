@@ -47,6 +47,14 @@ async def topup_credits(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     
+    # Fix #6: Enforce maximum credit limit of 100k
+    MAX_CREDITS = 100000.0
+    if current_user.credits + amount > MAX_CREDITS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Credit limit exceeded. Maximum balance is ${MAX_CREDITS:,.0f}. Current balance: ${current_user.credits:,.2f}"
+        )
+    
     current_user.credits += amount
     await current_user.save()
     return user_to_response(current_user)

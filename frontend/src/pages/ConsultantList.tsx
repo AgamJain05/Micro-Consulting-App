@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { RequestSessionModal } from '../components/RequestSessionModal';
+import { toast } from '../store/toastStore';
 
 const CATEGORIES = [
     { name: "All", icon: "grid_view" },
@@ -18,12 +19,18 @@ const CATEGORIES = [
 export const ConsultantList = () => {
     const [search, setSearch] = useState('');
     const [selectedCategory, setSelectedCategory] = useState("All");
+    // Fix #15: Enhanced filtering
+    const [minRating, setMinRating] = useState<number>(0);
+    const [maxPrice, setMaxPrice] = useState<number>(1000);
+    const [onlineOnly, setOnlineOnly] = useState<boolean>(false);
+    const [showFilters, setShowFilters] = useState<boolean>(false);
+
     const navigate = useNavigate();
     const { user } = useAuthStore();
 
     const [selectedConsultant, setSelectedConsultant] = useState<any>(null);
 
-    const { data: consultants, isLoading } = useQuery({
+    const { data: allConsultants, isLoading } = useQuery({
         queryKey: ['consultants', search, selectedCategory],
         queryFn: async () => {
             const params: any = {};
@@ -36,14 +43,29 @@ export const ConsultantList = () => {
         retry: false
     });
 
+    // Fix #15: Client-side filtering
+    const consultants = allConsultants?.filter((c: any) => {
+        if (minRating > 0 && (c.rating || 0) < minRating) return false;
+        if (maxPrice < 1000 && ((c.price_per_minute || 0) * 60) > maxPrice) return false;
+        if (onlineOnly && c.status !== 'online') return false;
+        return true;
+    });
+
     const handleRequestClick = (consultant: any) => {
         if (!user) {
             navigate('/login');
             return;
         }
+
+        // Fix #13: Prevent consultants from booking other consultants
+        if (user.role === 'consultant') {
+            toast.error('Consultants cannot book other consultants. Please create a client account to book sessions.');
+            return;
+        }
+
         const id = consultant.id || consultant._id;
         if (!id) {
-            alert("Error: Invalid consultant ID");
+            toast.error("Error: Invalid consultant ID");
             return;
         }
         setSelectedConsultant(consultant);
@@ -131,6 +153,90 @@ export const ConsultantList = () => {
                     </div>
                 </div>
 
+                {/* Fix #15: Enhanced Filters */}
+                <div className="mb-8">
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className="flex items-center gap-2 text-gray-700 font-bold hover:text-[#FF5A5F] transition mb-4"
+                    >
+                        <span className="material-icons-round">tune</span>
+                        {showFilters ? 'Hide Filters' : 'Show Filters'}
+                    </button>
+
+                    {showFilters && (
+                        <div className="bg-white rounded-2xl p-6 shadow-soft border border-gray-100">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                {/* Rating Filter */}
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                                        Minimum Rating
+                                    </label>
+                                    <select
+                                        value={minRating}
+                                        onChange={(e) => setMinRating(Number(e.target.value))}
+                                        className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5A5F]"
+                                    >
+                                        <option value={0}>All Ratings</option>
+                                        <option value={3}>3+ Stars</option>
+                                        <option value={4}>4+ Stars</option>
+                                        <option value={4.5}>4.5+ Stars</option>
+                                    </select>
+                                </div>
+
+                                {/* Price Filter */}
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                                        Max Price ($/hr): ${maxPrice}
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1000"
+                                        step="10"
+                                        value={maxPrice}
+                                        onChange={(e) => setMaxPrice(Number(e.target.value))}
+                                        className="w-full"
+                                    />
+                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                        <span>$0</span>
+                                        <span>$1000+</span>
+                                    </div>
+                                </div>
+
+                                {/* Online Status Filter */}
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                                        Availability
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={onlineOnly}
+                                            onChange={(e) => setOnlineOnly(e.target.checked)}
+                                            className="w-5 h-5 text-[#FF5A5F] rounded focus:ring-[#FF5A5F]"
+                                        />
+                                        <span className="text-gray-700">Online Now Only</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Reset Filters */}
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    onClick={() => {
+                                        setMinRating(0);
+                                        setMaxPrice(1000);
+                                        setOnlineOnly(false);
+                                    }}
+                                    className="text-sm text-gray-600 hover:text-[#FF5A5F] font-bold transition"
+                                >
+                                    Reset Filters
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {/* Consultant Cards Grid */}
                 {isLoading ? (
                     <div className="text-center py-20 text-gray-500">Loading experts...</div>
@@ -139,7 +245,8 @@ export const ConsultantList = () => {
                         {consultants?.map((consultant: any) => (
                             <div
                                 key={consultant.id || consultant._id}
-                                className="group bg-white rounded-3xl p-6 shadow-soft hover:shadow-hover transition-all duration-300 border border-gray-100 relative flex flex-col"
+                                onClick={() => navigate(`/consultant/${consultant.id || consultant._id}`)}
+                                className="group bg-white rounded-3xl p-6 shadow-soft hover:shadow-hover transition-all duration-300 border border-gray-100 relative flex flex-col cursor-pointer"
                             >
                                 {/* Favorite Button */}
                                 <button className="absolute top-5 right-5 text-gray-300 hover:text-[#FF5A5F] transition-colors">
@@ -154,8 +261,7 @@ export const ConsultantList = () => {
                                             alt={consultant.first_name}
                                             className="w-16 h-16 rounded-2xl object-cover shadow-sm"
                                         />
-                                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${consultant.status === 'online' ? 'bg-green-500' : 'bg-gray-400'
-                                            }`}></div>
+                                        {/* Fix #16: Removed online status dot */}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <h3 className="text-lg font-bold text-gray-900 leading-tight truncate">
@@ -194,7 +300,10 @@ export const ConsultantList = () => {
                                         <p className="text-xs text-green-600 font-bold">First {consultant.free_minutes || 15}m free</p>
                                     </div>
                                     <button
-                                        onClick={() => handleRequestClick(consultant)}
+                                        onClick={(e) => {
+                                            e.stopPropagation(); // Prevent card click
+                                            handleRequestClick(consultant);
+                                        }}
                                         className="bg-[#FF5A5F] hover:bg-[#E04F54] text-white px-6 py-3 rounded-xl font-bold shadow-md transition-all active:scale-95 whitespace-nowrap"
                                     >
                                         Book Now

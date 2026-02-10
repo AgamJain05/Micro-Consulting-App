@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { Login } from './pages/Login'
 import { Register } from './pages/Register'
 import { ConsultantList } from './pages/ConsultantList'
+import { ConsultantProfile } from './pages/ConsultantProfile'
+import { ClientProfile } from './pages/ClientProfile'
 import { SessionRoom } from './pages/SessionRoom'
 import { MySessions } from './pages/MySessions'
 import { WalletPage } from './pages/WalletPage'
@@ -12,9 +14,9 @@ import { AdminDashboard } from './pages/AdminDashboard'
 import { useAuthStore } from './store/authStore'
 import { sessionsApi } from './lib/api/index'
 import { ToastContainer } from './components/Toast'
-import { Shield, LogIn, UserPlus, LogOut, Menu, X } from 'lucide-react'
+import { Shield, LogIn, UserPlus, LogOut, Menu, X, Settings, User, ChevronDown } from 'lucide-react'
 import type { Session } from './types'
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const queryClient = new QueryClient()
 
@@ -33,13 +35,32 @@ function NavBar() {
   const { user } = useAuthStore()
   const navigate = useNavigate()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const handleLogout = () => {
     const { logout } = useAuthStore.getState();
     logout();
     setMobileMenuOpen(false);
+    setProfileDropdownOpen(false);
     navigate('/');
   };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProfileDropdownOpen(false);
+      }
+    };
+
+    if (profileDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [profileDropdownOpen]);
 
   // Get user profile for credits
   const { data: userProfile } = useQuery({
@@ -107,16 +128,73 @@ function NavBar() {
                     ${Math.floor(userProfile?.credits || 0)} Credits
                   </button>
                 )}
-                <div className="h-10 w-10 rounded-full bg-gray-200 overflow-hidden border-2 border-white shadow-sm cursor-pointer">
-                  <img
-                    alt="User Profile"
-                    className="h-full w-full object-cover"
-                    src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.first_name}+${user.last_name}&background=random`}
-                  />
+                {/* Fix #12: Profile Dropdown Menu */}
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                    className="flex items-center gap-2 hover:bg-gray-100 rounded-full p-2 transition"
+                  >
+                    <div className="h-10 w-10 rounded-full bg-gray-200 overflow-hidden border-2 border-white shadow-sm">
+                      <img
+                        alt="User Profile"
+                        className="h-full w-full object-cover"
+                        src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.first_name}+${user.last_name}&background=random`}
+                      />
+                    </div>
+                    <ChevronDown size={16} className="text-gray-600" />
+                  </button>
+
+                  {profileDropdownOpen && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-50">
+                      <div className="px-4 py-3 border-b border-gray-100">
+                        <p className="font-bold text-gray-900">{user.first_name} {user.last_name}</p>
+                        <p className="text-xs text-gray-500">{user.email}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          // Fix #18 & #19: Navigate based on user role
+                          if (user.role === 'consultant') {
+                            navigate('/dashboard');
+                          } else if (user.role === 'client') {
+                            navigate('/profile');
+                          } else {
+                            navigate('/consultants');
+                          }
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-gray-700 transition"
+                      >
+                        <User size={18} />
+                        <span className="font-medium">View Profile</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          // Fix #19: Navigate based on user role
+                          if (user.role === 'consultant') {
+                            navigate('/dashboard');
+                          } else if (user.role === 'client') {
+                            navigate('/profile');
+                          } else {
+                            navigate('/consultants');
+                          }
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-gray-700 transition"
+                      >
+                        <Settings size={18} />
+                        <span className="font-medium">Settings</span>
+                      </button>
+                      <div className="border-t border-gray-100 my-1"></div>
+                      <button
+                        onClick={handleLogout}
+                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-red-600 transition"
+                      >
+                        <LogOut size={18} />
+                        <span className="font-medium">Logout</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button onClick={handleLogout} className="text-gray-400 hover:text-red-400">
-                  <LogOut size={20} />
-                </button>
               </>
             ) : (
               <>
@@ -235,6 +313,8 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/consultants" element={<ConsultantList />} />
+              <Route path="/consultant/:consultantId" element={<ConsultantProfile />} />
+              <Route path="/profile" element={<ProtectedRoute><ClientProfile /></ProtectedRoute>} />
               <Route path="/my-sessions" element={<ProtectedRoute><MySessions /></ProtectedRoute>} />
               <Route path="/wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><ConsultantDashboard /></ProtectedRoute>} />
@@ -271,22 +351,33 @@ function NotificationBadge() {
 }
 
 function Home() {
+  const navigate = useNavigate();
+  const { user } = useAuthStore();
+
   return (
-    <div className="py-20 text-center">
-      <h2 className="text-5xl font-bold text-gray-900 mb-6 tracking-tight">
-        Find Expert Consultants <span className="text-[#FF5A5F]">Instantly</span>
-      </h2>
-      <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto">
-        Get help with your specific problems in minutes via metered video calls. No contracts, just results.
-      </p>
-      <Link
-        to="/consultants"
-        className="bg-[#FF5A5F] text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-[#E04F54] transition shadow-xl shadow-[#FF5A5F]/30 hover:scale-105 transform inline-block"
-      >
-        Browse Consultants
-      </Link>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Fix #14: Improved mobile responsiveness */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-16">
+        {/* Hero Section */}
+        <div className="text-center mb-12 sm:mb-16">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 mb-4 sm:mb-6 leading-tight px-2">
+            Find Expert Consultants
+            <br className="hidden sm:block" />
+            <span className="text-[#FF5A5F]"> Instantly</span>
+          </h1>
+          <p className="text-base sm:text-lg md:text-xl text-gray-600 max-w-2xl mx-auto mb-6 sm:mb-8 px-4">
+            Get help with your specific problems in minutes via metered video calls. No contracts, just results.
+          </p>
+          <Link
+            to="/consultants"
+            className="inline-block bg-[#FF5A5F] text-white px-6 sm:px-8 py-3 sm:py-4 rounded-full font-bold text-base sm:text-lg hover:bg-[#E04F54] transition shadow-xl shadow-[#FF5A5F]/30 hover:scale-105 transform"
+          >
+            Browse Consultants
+          </Link>
+        </div>
+      </div>
     </div>
-  )
+  );
 }
 
 export default App

@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { toast } from '../store/toastStore';
 
 export const MySessions = () => {
   const { user } = useAuthStore();
@@ -69,8 +70,8 @@ export const MySessions = () => {
           <button
             onClick={() => setActiveTab('active')}
             className={`flex-1 py-3 px-4 font-bold text-sm rounded-xl transition flex items-center justify-center gap-2 ${activeTab === 'active'
-                ? 'bg-[#FF5A5F] text-white shadow-md'
-                : 'text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#FF5A5F] text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'
               }`}
           >
             <span className="material-icons-round text-lg">inbox</span>
@@ -85,8 +86,8 @@ export const MySessions = () => {
           <button
             onClick={() => setActiveTab('history')}
             className={`flex-1 py-3 px-4 font-bold text-sm rounded-xl transition flex items-center justify-center gap-2 ${activeTab === 'history'
-                ? 'bg-[#FF5A5F] text-white shadow-md'
-                : 'text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#FF5A5F] text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'
               }`}
           >
             <span className="material-icons-round text-lg">history</span>
@@ -126,10 +127,10 @@ export const MySessions = () => {
                           {new Date(session.created_at).toLocaleDateString()}
                         </span>
                         <span className={`flex items-center gap-1 px-3 py-1.5 rounded-lg ${session.status === 'completed' ? 'bg-green-100 text-green-700' :
-                            session.status === 'active' ? 'bg-blue-100 text-blue-700' :
-                              session.status === 'accepted' ? 'bg-indigo-100 text-indigo-700' :
-                                session.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                                  'bg-gray-100 text-gray-700'
+                          session.status === 'active' ? 'bg-blue-100 text-blue-700' :
+                            session.status === 'accepted' ? 'bg-indigo-100 text-indigo-700' :
+                              session.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-gray-100 text-gray-700'
                           }`}>
                           <span className="material-icons-round text-sm">
                             {session.status === 'completed' ? 'check_circle' :
@@ -249,12 +250,14 @@ const ReviewModal = ({ sessionId, consultantName, onClose }: { sessionId: string
       });
     },
     onSuccess: () => {
-      alert("Review submitted!");
+      // Fix #5: Use toast instead of alert
+      toast.success("Review submitted successfully!");
       onClose();
       queryClient.invalidateQueries({ queryKey: ['my-sessions'] });
     },
     onError: (err: any) => {
-      alert(err.response?.data?.detail || "Failed to submit review");
+      // Fix #5: Use toast instead of alert
+      toast.error(err.response?.data?.detail || "Failed to submit review");
     }
   });
 
