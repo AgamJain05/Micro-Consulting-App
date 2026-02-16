@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 // Create axios instance
 export const apiClient: AxiosInstance = axios.create({
   baseURL: (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000',
+  withCredentials: true, // Enable sending cookies with requests
   headers: {
     'Content-Type': 'application/json',
   },
@@ -12,7 +13,8 @@ export const apiClient: AxiosInstance = axios.create({
 // Request interceptor to add auth token
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
-  if (token) {
+  // Only add Authorization header if we have a real JWT token (not cookie-based auth)
+  if (token && token !== 'cookie-auth') {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;

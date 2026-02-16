@@ -42,8 +42,16 @@ class User(Document):
     status: AvailabilityStatus = AvailabilityStatus.OFFLINE
     timezone: str = "UTC"
     
+    # OAuth fields
+    oauth_provider: Optional[str] = None  # "google", "github", etc.
+    oauth_id: Optional[str] = None  # Provider's unique user ID (e.g., Google's 'sub')
+    is_verified: bool = False  # Email verification status
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
         name = "users"
+        indexes = [
+            [("oauth_provider", 1), ("oauth_id", 1)],  # Composite unique index
+        ]

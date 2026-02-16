@@ -3,6 +3,8 @@ import { useForm } from 'react-hook-form';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
 export const Register = () => {
   const { register, handleSubmit, formState: { errors } } = useForm();
   const [error, setError] = useState('');
@@ -163,6 +165,35 @@ export const Register = () => {
               Create Account
             </button>
           </form>
+
+          {/* Google OAuth */}
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-300"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-white text-gray-500">Or continue with</span>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = `${API_URL}/api/v1/auth/google/login`;
+                }}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-xl shadow-sm bg-white hover:bg-gray-50 transition font-medium text-gray-700"
+              >
+                <img
+                  src="https://www.google.com/favicon.ico"
+                  alt="Google"
+                  className="w-5 h-5"
+                />
+                Sign up with Google
+              </button>
+            </div>
+          </div>
 
           <div className="mt-6 text-center">
             <p className="text-sm text-gray-600">

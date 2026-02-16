@@ -2,6 +2,8 @@ import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate } f
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { Login } from './pages/Login'
 import { Register } from './pages/Register'
+import { SelectRole } from './pages/SelectRole'
+import { OAuthCallback } from './pages/OAuthCallback'
 import { ConsultantList } from './pages/ConsultantList'
 import { ConsultantProfile } from './pages/ConsultantProfile'
 import { ClientProfile } from './pages/ClientProfile'
@@ -11,9 +13,11 @@ import { WalletPage } from './pages/WalletPage'
 import { ConsultantDashboard } from './pages/ConsultantDashboard'
 import { WaitingRoom } from './pages/WaitingRoom'
 import { AdminDashboard } from './pages/AdminDashboard'
+import { Settings as SettingsPage } from './pages/Settings'
 import { useAuthStore } from './store/authStore'
 import { sessionsApi } from './lib/api/index'
 import { ToastContainer } from './components/Toast'
+import { useAuthInit } from './hooks/useAuthInit'
 import { Shield, LogIn, UserPlus, LogOut, Menu, X, Settings, User, ChevronDown } from 'lucide-react'
 import type { Session } from './types'
 import { useState, useRef, useEffect } from 'react'
@@ -169,14 +173,7 @@ function NavBar() {
                       </button>
                       <button
                         onClick={() => {
-                          // Fix #19: Navigate based on user role
-                          if (user.role === 'consultant') {
-                            navigate('/dashboard');
-                          } else if (user.role === 'client') {
-                            navigate('/profile');
-                          } else {
-                            navigate('/consultants');
-                          }
+                          navigate('/settings');
                           setProfileDropdownOpen(false);
                         }}
                         className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-gray-700 transition"
@@ -301,6 +298,9 @@ function NavBar() {
 }
 
 function App() {
+  // Initialize auth state from HTTP-only cookie
+  useAuthInit();
+
   return (
     <QueryClientProvider client={queryClient}>
       <Router>
@@ -312,12 +312,15 @@ function App() {
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/auth/select-role" element={<SelectRole />} />
+              <Route path="/auth/callback" element={<OAuthCallback />} />
               <Route path="/consultants" element={<ConsultantList />} />
               <Route path="/consultant/:consultantId" element={<ConsultantProfile />} />
               <Route path="/profile" element={<ProtectedRoute><ClientProfile /></ProtectedRoute>} />
               <Route path="/my-sessions" element={<ProtectedRoute><MySessions /></ProtectedRoute>} />
               <Route path="/wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><ConsultantDashboard /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
               <Route path="/session/:sessionId" element={<ProtectedRoute><SessionRoom /></ProtectedRoute>} />
               <Route path="/session/:sessionId/waiting" element={<ProtectedRoute><WaitingRoom /></ProtectedRoute>} />
